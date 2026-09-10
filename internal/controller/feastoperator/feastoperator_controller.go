@@ -25,6 +25,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -34,7 +35,9 @@ import (
 	moduleconfig "github.com/opendatahub-io/feast-module-operator/pkg/config"
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/deploy"
+	odherrors "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/errors"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/gc"
+	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/render/kustomize"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/status/deployments"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/status/releases"
@@ -59,7 +62,7 @@ import (
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;delete;update
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sparkoperator.k8s.io,resources=sparkapplications,verbs=get;create;delete
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;update;watch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete;deletecollection
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
@@ -115,6 +118,8 @@ func NewReconciler(
 		WithAction(m.initialize).
 		WithAction(m.upgradeIfNeeded).
 		WithAction(m.setKustomizedParams).
+		WithAction(m.reconcileDataRegistryNamespace).
+		WithAction(m.reconcileCapabilitiesConfigMap).
 		WithAction(releases.NewAction()).
 		WithAction(m.reconcilePlatformVersion).
 		WithAction(kustomize.NewAction(
@@ -145,10 +150,28 @@ func NewReconciler(
 	return nil
 }
 
+const conditionReasonPendingCapabilityRemoval = "PendingCapabilityRemoval"
+
 // cleanupClusterResources removes cluster-scoped resources (ClusterRoles, ClusterRoleBindings)
 // that cannot use ownerReferences for garbage collection.
 func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
+
+	if m.cfg.FeatureStoreEnabled || m.cfg.DataRegistryEnabled {
+		log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
+			"featureStoreEnabled", m.cfg.FeatureStoreEnabled,
+			"dataRegistryEnabled", m.cfg.DataRegistryEnabled,
+		)
+		rr.Conditions.MarkFalse(
+			"Ready",
+			conditions.WithReason(conditionReasonPendingCapabilityRemoval),
+			conditions.WithMessage(
+				"cluster resource cleanup deferred until both feature store and data registry capabilities are removed",
+			),
+		)
+		return odherrors.NewStopError("capabilities still enabled")
+	}
+
 	listOpts := []client.ListOption{
 		client.MatchingLabels{
 			labels.ODH.Component(componentName): labels.True,
@@ -156,6 +179,19 @@ func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.Recon
 	}
 
 	log.Info("Cleaning up cluster-scoped resources for FeastOperator")
+
+	cm := &corev1.ConfigMap{}
+	err := rr.Client.Get(ctx, client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: m.cfg.ApplicationsNamespace,
+	}, cm)
+	if err == nil {
+		if err := rr.Client.Delete(ctx, cm); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("failed to delete capabilities ConfigMap %s: %w", capabilitiesConfigMapName, err)
+		}
+	} else if !k8serr.IsNotFound(err) {
+		return fmt.Errorf("failed to get capabilities ConfigMap %s: %w", capabilitiesConfigMapName, err)
+	}
 
 	crbList := &rbacv1.ClusterRoleBindingList{}
 	if err := rr.Client.List(ctx, crbList, listOpts...); err != nil {

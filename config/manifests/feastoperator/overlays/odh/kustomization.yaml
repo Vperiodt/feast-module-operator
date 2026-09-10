@@ -11,6 +11,20 @@ resources:
 patches:
   # patch to remove default `system` namespace in ../../manager/manager.yaml
   - path: delete-namespace.yaml
+  - target:
+      kind: Deployment
+      name: controller-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: FEATURE_STORE_ENABLED
+          value: ""
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: DATA_REGISTRY_ENABLED
+          value: ""
 
 configMapGenerator:
   - name:  feast-operator-parameters
@@ -62,3 +76,23 @@ replacements:
           name: controller-manager
         fieldPaths:
           - spec.template.spec.containers.[name=manager].env.[name=OIDC_ISSUER_URL].value
+  - source:
+      kind: ConfigMap
+      name: feast-operator-parameters
+      fieldPath: data.FEATURE_STORE_ENABLED
+    targets:
+      - select:
+          kind: Deployment
+          name: controller-manager
+        fieldPaths:
+          - spec.template.spec.containers.[name=manager].env.[name=FEATURE_STORE_ENABLED].value
+  - source:
+      kind: ConfigMap
+      name: feast-operator-parameters
+      fieldPath: data.DATA_REGISTRY_ENABLED
+    targets:
+      - select:
+          kind: Deployment
+          name: controller-manager
+        fieldPaths:
+          - spec.template.spec.containers.[name=manager].env.[name=DATA_REGISTRY_ENABLED].value
