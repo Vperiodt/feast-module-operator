@@ -29,7 +29,6 @@ import (
 
 	componentApi "github.com/opendatahub-io/feast-module-operator/api/components/v1alpha1"
 	odhtypes "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
-	odhdeploy "github.com/opendatahub-io/opendatahub-operator/v2/pkg/deploy"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/metadata/labels"
 )
 
@@ -38,36 +37,22 @@ const (
 
 	capabilitiesKeyFeatureStoreEnabled = "featureStoreEnabled"
 	capabilitiesKeyDataRegistryEnabled = "dataRegistryEnabled"
-
-	paramsEnvKeyFeatureStoreEnabled = "FEATURE_STORE_ENABLED"
-	paramsEnvKeyDataRegistryEnabled = "DATA_REGISTRY_ENABLED"
 )
 
 func boolString(value bool) string {
 	return strconv.FormatBool(value)
 }
 
-// reconcileCapabilitiesConfigMap projects capability toggles into params.env and the
-// feast-capabilities-config ConfigMap consumed by the upstream feast-operator.
+// reconcileCapabilitiesConfigMap creates/updates the feast-capabilities-config ConfigMap
+// consumed by the upstream feast-operator at startup.
+// The upstream operator reads this ConfigMap to determine which reconciliation branches to activate
+// (featureStoreEnabled / dataRegistryEnabled).
 func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
 	feast, ok := rr.Instance.(*componentApi.FeastOperator)
 	if !ok {
 		return errors.New("instance is not a FeastOperator")
-	}
-
-	if len(rr.Manifests) == 0 {
-		return errors.New("no manifests initialized before reconcileCapabilitiesConfigMap")
-	}
-
-	capabilityParams := map[string]string{
-		paramsEnvKeyFeatureStoreEnabled: boolString(m.cfg.FeatureStoreEnabled),
-		paramsEnvKeyDataRegistryEnabled: boolString(m.cfg.DataRegistryEnabled),
-	}
-
-	if err := odhdeploy.ApplyParams(rr.Manifests[0].String(), "params.env", nil, capabilityParams); err != nil {
-		return fmt.Errorf("failed to update params.env with capability parameters: %w", err)
 	}
 
 	cm := &corev1.ConfigMap{
