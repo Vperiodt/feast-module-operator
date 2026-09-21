@@ -29,9 +29,9 @@ import (
 )
 
 const (
-	dataRegistryNamespaceName      = "rhoai-data-registry"
-	dataRegistryEnabledLabelKey      = "dataregistry.opendatahub.io/enabled"
-	dataRegistryEnabledLabelValue    = "true"
+	dataRegistryNamespaceName     = "rhoai-data-registry"
+	dataRegistryEnabledLabelKey   = "dataregistry.opendatahub.io/enabled"
+	dataRegistryEnabledLabelValue = "true"
 )
 
 // reconcileDataRegistryNamespace provisions the dedicated Data Registry namespace

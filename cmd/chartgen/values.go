@@ -82,6 +82,12 @@ type Values struct {
 	// merged into the controller ConfigMap.
 	Config map[string]string `json:"config"`
 
+	// InstallCRDs controls whether Helm renders the FeastOperator CRD from
+	// templates/. CRDs generated under chart crds/ are controlled via
+	// helm --skip-crds instead. Set false on clusters where the platform
+	// already installed the CRD.
+	InstallCRDs bool `json:"installCRDs" jsonschema:"default=true"`
+
 	// UpgradeGates declares admin acknowledgment gates that block platform
 	// provisioning until an administrator explicitly acknowledges them.
 	// Empty by default; populated by the ODH operator when a breaking
@@ -137,6 +143,7 @@ func DefaultValues() Values {
 			},
 		},
 		LeaderElect: true,
+		InstallCRDs: true,
 		ServiceAccount: ServiceAccountSpec{
 			Annotations: map[string]string{},
 		},

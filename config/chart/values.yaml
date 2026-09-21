@@ -4,9 +4,10 @@ config:
 fullnameOverride: ""
 image:
   fullRef: ""
-  repository: quay.io/opendatahub/odh-feast-module-operator
-  tag: odh-stable
+  repository: ttl.sh/opendatahub-feast-operator
+  tag: latest
 imagePullSecret: ""
+installCRDs: true
 leaderElect: true
 nameOverride: ""
 namespace: ""
@@ -21,4 +22,3 @@ resources:
 serviceAccount:
   annotations: {}
   name: ""
-upgradeGates: {}
