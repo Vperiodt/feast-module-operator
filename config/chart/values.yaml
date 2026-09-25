@@ -4,8 +4,8 @@ config:
 fullnameOverride: ""
 image:
   fullRef: ""
-  repository: ttl.sh/opendatahub-feast-operator
-  tag: latest
+  repository: quay.io/opendatahub/odh-feast-module-operator
+  tag: odh-stable
 imagePullSecret: ""
 installCRDs: true
 leaderElect: true
