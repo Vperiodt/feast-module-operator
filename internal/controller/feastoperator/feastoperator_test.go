@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,7 +35,6 @@ import (
 	moduleconfig "github.com/opendatahub-io/feast-module-operator/pkg/config"
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/cluster"
-	odherrors "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/errors"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
 	odhtypes "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/metadata/labels"
@@ -223,11 +223,45 @@ func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
 
 	err := m.cleanupClusterResources(context.Background(), rr)
 	g.Expect(err).To(HaveOccurred())
-	g.Expect(err).To(BeAssignableToTypeOf(odherrors.StopError{}))
+	g.Expect(err.Error()).To(ContainSubstring("capabilities still enabled"))
 
 	cond := rr.Conditions.GetCondition("Ready")
 	g.Expect(cond).NotTo(BeNil())
 	g.Expect(cond.Reason).To(Equal(conditionReasonPendingCapabilityRemoval))
+}
+
+func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(componentApi.AddToScheme(scheme))
+
+	feast := newTestFeastOperator()
+	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
+		DataRegistry: componentApi.DataRegistrySpec{ManagementState: operatorv1.Managed},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	// Env says both disabled — but spec.capabilities overrides
+	m := &Module{
+		cfg: &moduleconfig.Config{
+			ApplicationsNamespace: "test-ns",
+			FeatureStoreEnabled:   false,
+			DataRegistryEnabled:   false,
+		},
+	}
+
+	rr := &odhtypes.ReconciliationRequest{
+		Instance:   feast,
+		Client:     cl,
+		Conditions: conditions.NewManager(feast, "Ready"),
+	}
+
+	err := m.cleanupClusterResources(context.Background(), rr)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("capabilities still enabled"))
 }
 
 func TestCleanupClusterResourcesRunsWhenBothCapabilitiesRemoved(t *testing.T) {

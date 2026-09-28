@@ -48,6 +48,51 @@ spec:
           spec:
             description: FeastOperatorSpec defines the desired state of FeastOperator.
             properties:
+              capabilities:
+                description: |-
+                  Capabilities declares the desired state for Feature Store and Data Registry.
+                  When present, these values are authoritative and override process-level
+                  environment defaults. When absent, the module falls back to startup
+                  configuration (env vars) for backward compatibility.
+                properties:
+                  dataRegistry:
+                    description: |-
+                      DataRegistry controls Data Registry workload reconciliation and
+                      namespace provisioning.
+                    properties:
+                      managementState:
+                        enum:
+                        - Managed
+                        - Removed
+                        pattern: ^(Managed|Unmanaged|Force|Removed)$
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace selects the Kubernetes namespace for the platform Data Registry.
+                          If empty or omitted, defaults to "rhoai-data-registry" at the module level.
+                          Must be a valid Kubernetes namespace name. Once provisioned, changing this
+                          field is rejected by the module operator.
+                        type: string
+                    required:
+                    - managementState
+                    type: object
+                  featureStore:
+                    description: FeatureStore controls standard FeatureStore workload
+                      reconciliation.
+                    properties:
+                      managementState:
+                        enum:
+                        - Managed
+                        - Removed
+                        pattern: ^(Managed|Unmanaged|Force|Removed)$
+                        type: string
+                    required:
+                    - managementState
+                    type: object
+                required:
+                - dataRegistry
+                - featureStore
+                type: object
               oidc:
                 description: |-
                   OIDC holds the OIDC issuer settings. When the cluster uses external OIDC

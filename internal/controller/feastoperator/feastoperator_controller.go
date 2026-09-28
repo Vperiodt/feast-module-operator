@@ -35,7 +35,6 @@ import (
 	moduleconfig "github.com/opendatahub-io/feast-module-operator/pkg/config"
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/deploy"
-	odherrors "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/errors"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/gc"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/render/kustomize"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/status/deployments"
@@ -157,10 +156,16 @@ const conditionReasonPendingCapabilityRemoval = "PendingCapabilityRemoval"
 func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
-	if m.cfg.FeatureStoreEnabled || m.cfg.DataRegistryEnabled {
+	feast, ok := rr.Instance.(*componentApi.FeastOperator)
+	if !ok {
+		return fmt.Errorf("instance is not a FeastOperator")
+	}
+
+	fsEnabled, drEnabled, _ := m.resolveCapabilities(feast)
+	if fsEnabled || drEnabled {
 		log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
-			"featureStoreEnabled", m.cfg.FeatureStoreEnabled,
-			"dataRegistryEnabled", m.cfg.DataRegistryEnabled,
+			"featureStoreEnabled", fsEnabled,
+			"dataRegistryEnabled", drEnabled,
 		)
 		rr.Conditions.MarkFalse(
 			"Ready",
@@ -169,7 +174,7 @@ func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.Recon
 				"cluster resource cleanup deferred until both feature store and data registry capabilities are removed",
 			),
 		)
-		return odherrors.NewStopError("capabilities still enabled")
+		return fmt.Errorf("capabilities still enabled, deferring cleanup")
 	}
 
 	listOpts := []client.ListOption{

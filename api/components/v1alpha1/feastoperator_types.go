@@ -17,8 +17,10 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 )
 
 const (
@@ -36,6 +38,48 @@ type FeastOperatorSpec struct {
 	// the issuer URL is written to params.env before kustomize renders manifests.
 	// +optional
 	OIDC *common.GatewayOIDCSpec `json:"oidc,omitempty"`
+
+	// Capabilities declares the desired state for Feature Store and Data Registry.
+	// When present, these values are authoritative and override process-level
+	// environment defaults. When absent, the module falls back to startup
+	// configuration (env vars) for backward compatibility.
+	// +optional
+	Capabilities *CapabilitiesSpec `json:"capabilities,omitempty"`
+}
+
+// CapabilitiesSpec declares per-capability management state. Both fields are
+// required when the block is present — the handler must write the full block
+// or omit it entirely.
+// +kubebuilder:object:generate=true
+type CapabilitiesSpec struct {
+	// FeatureStore controls standard FeatureStore workload reconciliation.
+	FeatureStore CapabilitySpec `json:"featureStore"`
+
+	// DataRegistry controls Data Registry workload reconciliation and
+	// namespace provisioning.
+	DataRegistry DataRegistrySpec `json:"dataRegistry"`
+}
+
+// CapabilitySpec holds the management state for a single capability.
+// +kubebuilder:object:generate=true
+type CapabilitySpec struct {
+	// +kubebuilder:validation:Enum=Managed;Removed
+	ManagementState operatorv1.ManagementState `json:"managementState"`
+}
+
+// DataRegistrySpec holds the management state and optional namespace for
+// the Data Registry capability.
+// +kubebuilder:object:generate=true
+type DataRegistrySpec struct {
+	// +kubebuilder:validation:Enum=Managed;Removed
+	ManagementState operatorv1.ManagementState `json:"managementState"`
+
+	// Namespace selects the Kubernetes namespace for the platform Data Registry.
+	// If empty or omitted, defaults to "rhoai-data-registry" at the module level.
+	// Must be a valid Kubernetes namespace name. Once provisioned, changing this
+	// field is rejected by the module operator.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // FeastOperatorStatus defines the observed state of FeastOperator.

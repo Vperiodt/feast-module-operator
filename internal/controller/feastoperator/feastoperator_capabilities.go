@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 
+	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -37,6 +38,7 @@ const (
 
 	capabilitiesKeyFeatureStoreEnabled = "featureStoreEnabled"
 	capabilitiesKeyDataRegistryEnabled = "dataRegistryEnabled"
+	capabilitiesKeyDataRegistryNS      = "dataRegistryNamespace"
 )
 
 func boolString(value bool) string {
@@ -46,7 +48,11 @@ func boolString(value bool) string {
 // reconcileCapabilitiesConfigMap creates/updates the feast-capabilities-config ConfigMap
 // consumed by the upstream feast-operator at startup.
 // The upstream operator reads this ConfigMap to determine which reconciliation branches to activate
-// (featureStoreEnabled / dataRegistryEnabled).
+// (featureStoreEnabled / dataRegistryEnabled / dataRegistryNamespace).
+//
+// Resolution order:
+//  1. If spec.capabilities is present on the FeastOperator CR, use those values (authoritative).
+//  2. Otherwise fall back to process-level environment defaults (backward compat).
 func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
@@ -54,6 +60,8 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 	if !ok {
 		return errors.New("instance is not a FeastOperator")
 	}
+
+	fsEnabled, drEnabled, drNamespace := m.resolveCapabilities(feast)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -68,8 +76,11 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 		}
 		cm.Labels[labels.ODH.Component(componentName)] = labels.True
 		cm.Data = map[string]string{
-			capabilitiesKeyFeatureStoreEnabled: boolString(m.cfg.FeatureStoreEnabled),
-			capabilitiesKeyDataRegistryEnabled: boolString(m.cfg.DataRegistryEnabled),
+			capabilitiesKeyFeatureStoreEnabled: boolString(fsEnabled),
+			capabilitiesKeyDataRegistryEnabled: boolString(drEnabled),
+		}
+		if drEnabled {
+			cm.Data[capabilitiesKeyDataRegistryNS] = drNamespace
 		}
 		return controllerutil.SetControllerReference(feast, cm, rr.Client.Scheme())
 	})
@@ -81,7 +92,30 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 		"configmap", capabilitiesConfigMapName,
 		"namespace", m.cfg.ApplicationsNamespace,
 		"operation", op,
+		"featureStoreEnabled", fsEnabled,
+		"dataRegistryEnabled", drEnabled,
+		"dataRegistryNamespace", drNamespace,
 	)
 
 	return nil
+}
+
+// resolveCapabilities returns the effective capability states and namespace.
+// When spec.capabilities is present on the CR it is authoritative; otherwise
+// the module falls back to its process-level environment configuration.
+func (m *Module) resolveCapabilities(feast *componentApi.FeastOperator) (fsEnabled, drEnabled bool, drNamespace string) {
+	if feast.Spec.Capabilities != nil {
+		fsEnabled = feast.Spec.Capabilities.FeatureStore.ManagementState == operatorv1.Managed
+		drEnabled = feast.Spec.Capabilities.DataRegistry.ManagementState == operatorv1.Managed
+		drNamespace = feast.Spec.Capabilities.DataRegistry.Namespace
+	} else {
+		fsEnabled = m.cfg.FeatureStoreEnabled
+		drEnabled = m.cfg.DataRegistryEnabled
+	}
+
+	if drNamespace == "" {
+		drNamespace = dataRegistryNamespaceName
+	}
+
+	return fsEnabled, drEnabled, drNamespace
 }

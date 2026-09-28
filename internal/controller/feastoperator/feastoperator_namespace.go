@@ -18,6 +18,7 @@ package feastoperator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	componentApi "github.com/opendatahub-io/feast-module-operator/api/components/v1alpha1"
 	odhtypes "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
 )
 
@@ -35,9 +37,19 @@ const (
 )
 
 // reconcileDataRegistryNamespace provisions the dedicated Data Registry namespace
-// when the capability is enabled. EA2 hardcodes rhoai-data-registry.
+// when the capability is enabled.
+//
+// Resolution order for namespace name:
+//  1. spec.capabilities.dataRegistry.namespace (when spec.capabilities is present)
+//  2. Default: rhoai-data-registry
 func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
-	if !m.cfg.DataRegistryEnabled {
+	feast, ok := rr.Instance.(*componentApi.FeastOperator)
+	if !ok {
+		return errors.New("instance is not a FeastOperator")
+	}
+
+	_, drEnabled, drNamespace := m.resolveCapabilities(feast)
+	if !drEnabled {
 		return nil
 	}
 
@@ -45,7 +57,7 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: dataRegistryNamespaceName,
+			Name: drNamespace,
 		},
 	}
 
@@ -57,11 +69,11 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to reconcile Data Registry namespace %s: %w", dataRegistryNamespaceName, err)
+		return fmt.Errorf("failed to reconcile Data Registry namespace %s: %w", drNamespace, err)
 	}
 
 	log.V(1).Info("Reconciled Data Registry namespace",
-		"namespace", dataRegistryNamespaceName,
+		"namespace", drNamespace,
 		"operation", op,
 	)
 

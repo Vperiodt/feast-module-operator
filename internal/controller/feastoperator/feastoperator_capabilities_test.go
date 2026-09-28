@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -134,4 +135,113 @@ func TestReconcileCapabilitiesConfigMapUpdatesExistingConfigMap(t *testing.T) {
 	}, cm)).To(Succeed())
 	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
 	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("true"))
+}
+
+func TestReconcileCapabilitiesFromSpecOverridesEnv(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesTestScheme()
+	feast := newTestFeastOperator()
+	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
+		DataRegistry: componentApi.DataRegistrySpec{
+			ManagementState: operatorv1.Managed,
+			Namespace:       "catalog-prod",
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	// Env says both true — but spec.capabilities overrides
+	m := newCapabilitiesTestModule(t, true, true)
+	rr := newCapabilitiesRR(t, cl, feast, m)
+
+	g.Expect(m.reconcileCapabilitiesConfigMap(context.Background(), rr)).To(Succeed())
+
+	cm := &corev1.ConfigMap{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: "test-ns",
+	}, cm)).To(Succeed())
+	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("true"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryNS]).To(Equal("catalog-prod"))
+}
+
+func TestReconcileCapabilitiesFromSpecDefaultNamespace(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesTestScheme()
+	feast := newTestFeastOperator()
+	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
+		DataRegistry: componentApi.DataRegistrySpec{
+			ManagementState: operatorv1.Managed,
+			// Namespace omitted — should default to rhoai-data-registry
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	m := newCapabilitiesTestModule(t, false, false)
+	rr := newCapabilitiesRR(t, cl, feast, m)
+
+	g.Expect(m.reconcileCapabilitiesConfigMap(context.Background(), rr)).To(Succeed())
+
+	cm := &corev1.ConfigMap{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: "test-ns",
+	}, cm)).To(Succeed())
+	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("true"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("true"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryNS]).To(Equal("rhoai-data-registry"))
+}
+
+func TestReconcileCapabilitiesFallbackToEnvWhenSpecAbsent(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesTestScheme()
+	feast := newTestFeastOperator()
+	// No spec.capabilities set — should fall back to env config
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	m := newCapabilitiesTestModule(t, false, true)
+	rr := newCapabilitiesRR(t, cl, feast, m)
+
+	g.Expect(m.reconcileCapabilitiesConfigMap(context.Background(), rr)).To(Succeed())
+
+	cm := &corev1.ConfigMap{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: "test-ns",
+	}, cm)).To(Succeed())
+	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("true"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryNS]).To(Equal("rhoai-data-registry"))
+}
+
+func TestReconcileCapabilitiesNoNamespaceKeyWhenDRDisabled(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesTestScheme()
+	feast := newTestFeastOperator()
+	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
+		DataRegistry: componentApi.DataRegistrySpec{ManagementState: operatorv1.Removed},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	m := newCapabilitiesTestModule(t, true, true)
+	rr := newCapabilitiesRR(t, cl, feast, m)
+
+	g.Expect(m.reconcileCapabilitiesConfigMap(context.Background(), rr)).To(Succeed())
+
+	cm := &corev1.ConfigMap{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: "test-ns",
+	}, cm)).To(Succeed())
+	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("true"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("false"))
+	_, hasNSKey := cm.Data[capabilitiesKeyDataRegistryNS]
+	g.Expect(hasNSKey).To(BeFalse(), "dataRegistryNamespace should not be set when DR is disabled")
 }
