@@ -17,7 +17,6 @@ limitations under the License.
 package v1alpha1
 
 import (
-	operatorv1 "github.com/openshift/api/operator/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
@@ -60,11 +59,21 @@ type CapabilitiesSpec struct {
 	DataRegistry CapabilitySpec `json:"dataRegistry"`
 }
 
+// CapabilityManagementState restricts the allowed management states for capability
+// toggles to Managed or Removed. Unlike the platform's general ManagementState,
+// Unmanaged and Force are not valid for capability toggles.
+// +kubebuilder:validation:Enum=Managed;Removed
+type CapabilityManagementState string
+
+const (
+	CapabilityManaged CapabilityManagementState = "Managed"
+	CapabilityRemoved CapabilityManagementState = "Removed"
+)
+
 // CapabilitySpec holds the management state for a single capability.
 // +kubebuilder:object:generate=true
 type CapabilitySpec struct {
-	// +kubebuilder:validation:Enum=Managed;Removed
-	ManagementState operatorv1.ManagementState `json:"managementState"`
+	ManagementState CapabilityManagementState `json:"managementState"`
 }
 
 // FeastOperatorStatus defines the observed state of FeastOperator.

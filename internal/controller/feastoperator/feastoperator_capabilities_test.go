@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -143,8 +142,8 @@ func TestReconcileCapabilitiesFromSpecOverridesEnv(t *testing.T) {
 	scheme := initCapabilitiesTestScheme()
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
-		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
-		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityRemoved},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
@@ -170,8 +169,8 @@ func TestReconcileCapabilitiesFromSpecDefaultNamespace(t *testing.T) {
 	scheme := initCapabilitiesTestScheme()
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
-		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
-		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
@@ -219,8 +218,8 @@ func TestReconcileCapabilitiesNoNamespaceKeyWhenDRDisabled(t *testing.T) {
 	scheme := initCapabilitiesTestScheme()
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
-		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
-		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityRemoved},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 

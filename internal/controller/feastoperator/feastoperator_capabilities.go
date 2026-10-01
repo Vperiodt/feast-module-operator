@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"strconv"
 
-	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -108,8 +107,8 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 // The data registry namespace is always rhoai-data-registry (hardcoded).
 func (m *Module) resolveCapabilities(feast *componentApi.FeastOperator) (fsEnabled, drEnabled bool) {
 	if feast.Spec.Capabilities != nil {
-		fsEnabled = feast.Spec.Capabilities.FeatureStore.ManagementState == operatorv1.Managed
-		drEnabled = feast.Spec.Capabilities.DataRegistry.ManagementState == operatorv1.Managed
+		fsEnabled = feast.Spec.Capabilities.FeatureStore.ManagementState == componentApi.CapabilityManaged
+		drEnabled = feast.Spec.Capabilities.DataRegistry.ManagementState == componentApi.CapabilityManaged
 	} else {
 		fsEnabled = m.cfg.FeatureStoreEnabled
 		drEnabled = m.cfg.DataRegistryEnabled

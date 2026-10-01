@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -203,8 +202,11 @@ func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(componentApi.AddToScheme(scheme))
+	utilruntime.Must(rbacv1.AddToScheme(scheme))
 
 	feast := newTestFeastOperator()
+	// No spec.capabilities set — even though env defaults to true,
+	// cleanup should proceed to avoid finalizer deadlock.
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
 	m := &Module{
@@ -221,13 +223,8 @@ func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
 		Conditions: conditions.NewManager(feast, "Ready"),
 	}
 
-	err := m.cleanupClusterResources(context.Background(), rr)
-	g.Expect(err).To(HaveOccurred())
-	g.Expect(err.Error()).To(ContainSubstring("capabilities still enabled"))
-
-	cond := rr.Conditions.GetCondition("Ready")
-	g.Expect(cond).NotTo(BeNil())
-	g.Expect(cond.Reason).To(Equal(conditionReasonPendingCapabilityRemoval))
+	// With spec.capabilities absent, cleanup proceeds regardless of env defaults.
+	g.Expect(m.cleanupClusterResources(context.Background(), rr)).To(Succeed())
 }
 
 func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) {
@@ -239,8 +236,8 @@ func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) 
 
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
-		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
-		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityRemoved},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 

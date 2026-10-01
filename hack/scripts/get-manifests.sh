@@ -32,10 +32,21 @@ MARKER_FILE="${DST_MANIFESTS_DIR}/.manifest-source-commit"
 if [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${DST_MANIFESTS_DIR}/manager/manager.yaml" ]]; then
     if [[ ! -f "${MARKER_FILE}" ]]; then
         echo "${COMMIT_SHA}" > "${MARKER_FILE}"
+    elif [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" != "${COMMIT_SHA}" ]]; then
+        echo "WARNING: bundled manifests were fetched at $(cat "${MARKER_FILE}"), expected ${COMMIT_SHA}" >&2
+        echo "Re-fetching to match expected commit (set FORCE_GET_MANIFESTS=true to always refresh)"
+        # Fall through to re-download below instead of exiting
+    else
+        echo "Bundled manifests present under ${DST_MANIFESTS_DIR}, skipping download"
+        echo "(set FORCE_GET_MANIFESTS=true to re-fetch from GitHub)"
+        exit 0
     fi
-    echo "Bundled manifests present under ${DST_MANIFESTS_DIR}, skipping download"
-    echo "(set FORCE_GET_MANIFESTS=true to re-fetch from GitHub)"
-    exit 0
+    # If marker was just written or matches, exit; otherwise fall through
+    if [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" == "${COMMIT_SHA}" ]]; then
+        echo "Bundled manifests present under ${DST_MANIFESTS_DIR}, skipping download"
+        echo "(set FORCE_GET_MANIFESTS=true to re-fetch from GitHub)"
+        exit 0
+    fi
 fi
 
 if [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${MARKER_FILE}" ]]; then

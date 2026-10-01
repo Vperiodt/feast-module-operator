@@ -161,20 +161,26 @@ func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.Recon
 		return fmt.Errorf("instance is not a FeastOperator")
 	}
 
-	fsEnabled, drEnabled := m.resolveCapabilities(feast)
-	if fsEnabled || drEnabled {
-		log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
-			"featureStoreEnabled", fsEnabled,
-			"dataRegistryEnabled", drEnabled,
-		)
-		rr.Conditions.MarkFalse(
-			"Ready",
-			conditions.WithReason(conditionReasonPendingCapabilityRemoval),
-			conditions.WithMessage(
-				"cluster resource cleanup deferred until both feature store and data registry capabilities are removed",
-			),
-		)
-		return fmt.Errorf("capabilities still enabled, deferring cleanup")
+	// Only defer cleanup when capabilities are explicitly set and still Managed.
+	// When spec.capabilities is absent (legacy/default CRs), always allow cleanup
+	// to proceed — otherwise the CR gets stuck in Terminating forever because
+	// the env fallback defaults both toggles to true.
+	if feast.Spec.Capabilities != nil {
+		fsEnabled, drEnabled := m.resolveCapabilities(feast)
+		if fsEnabled || drEnabled {
+			log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
+				"featureStoreEnabled", fsEnabled,
+				"dataRegistryEnabled", drEnabled,
+			)
+			rr.Conditions.MarkFalse(
+				"Ready",
+				conditions.WithReason(conditionReasonPendingCapabilityRemoval),
+				conditions.WithMessage(
+					"cluster resource cleanup deferred until both feature store and data registry capabilities are removed",
+				),
+			)
+			return fmt.Errorf("capabilities still enabled, deferring cleanup")
+		}
 	}
 
 	listOpts := []client.ListOption{

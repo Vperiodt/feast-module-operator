@@ -58,20 +58,16 @@ spec:
                   dataRegistry:
                     description: |-
                       DataRegistry controls Data Registry workload reconciliation and
-                      namespace provisioning.
+                      namespace provisioning. The namespace is always rhoai-data-registry.
                     properties:
                       managementState:
+                        description: |-
+                          CapabilityManagementState restricts the allowed management states for capability
+                          toggles to Managed or Removed. Unlike the platform's general ManagementState,
+                          Unmanaged and Force are not valid for capability toggles.
                         enum:
                         - Managed
                         - Removed
-                        pattern: ^(Managed|Unmanaged|Force|Removed)$
-                        type: string
-                      namespace:
-                        description: |-
-                          Namespace selects the Kubernetes namespace for the platform Data Registry.
-                          If empty or omitted, defaults to "rhoai-data-registry" at the module level.
-                          Must be a valid Kubernetes namespace name. Once provisioned, changing this
-                          field is rejected by the module operator.
                         type: string
                     required:
                     - managementState
@@ -81,10 +77,13 @@ spec:
                       reconciliation.
                     properties:
                       managementState:
+                        description: |-
+                          CapabilityManagementState restricts the allowed management states for capability
+                          toggles to Managed or Removed. Unlike the platform's general ManagementState,
+                          Unmanaged and Force are not valid for capability toggles.
                         enum:
                         - Managed
                         - Removed
-                        pattern: ^(Managed|Unmanaged|Force|Removed)$
                         type: string
                     required:
                     - managementState
