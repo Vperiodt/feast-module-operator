@@ -56,8 +56,8 @@ type CapabilitiesSpec struct {
 	FeatureStore CapabilitySpec `json:"featureStore"`
 
 	// DataRegistry controls Data Registry workload reconciliation and
-	// namespace provisioning.
-	DataRegistry DataRegistrySpec `json:"dataRegistry"`
+	// namespace provisioning. The namespace is always rhoai-data-registry.
+	DataRegistry CapabilitySpec `json:"dataRegistry"`
 }
 
 // CapabilitySpec holds the management state for a single capability.
@@ -65,21 +65,6 @@ type CapabilitiesSpec struct {
 type CapabilitySpec struct {
 	// +kubebuilder:validation:Enum=Managed;Removed
 	ManagementState operatorv1.ManagementState `json:"managementState"`
-}
-
-// DataRegistrySpec holds the management state and optional namespace for
-// the Data Registry capability.
-// +kubebuilder:object:generate=true
-type DataRegistrySpec struct {
-	// +kubebuilder:validation:Enum=Managed;Removed
-	ManagementState operatorv1.ManagementState `json:"managementState"`
-
-	// Namespace selects the Kubernetes namespace for the platform Data Registry.
-	// If empty or omitted, defaults to "rhoai-data-registry" at the module level.
-	// Must be a valid Kubernetes namespace name. Once provisioned, changing this
-	// field is rejected by the module operator.
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // FeastOperatorStatus defines the observed state of FeastOperator.

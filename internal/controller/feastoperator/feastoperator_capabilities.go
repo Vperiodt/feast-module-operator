@@ -53,6 +53,8 @@ func boolString(value bool) string {
 // Resolution order:
 //  1. If spec.capabilities is present on the FeastOperator CR, use those values (authoritative).
 //  2. Otherwise fall back to process-level environment defaults (backward compat).
+//
+// The data registry namespace is always rhoai-data-registry (hardcoded).
 func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
@@ -61,7 +63,7 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 		return errors.New("instance is not a FeastOperator")
 	}
 
-	fsEnabled, drEnabled, drNamespace := m.resolveCapabilities(feast)
+	fsEnabled, drEnabled := m.resolveCapabilities(feast)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -80,7 +82,7 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 			capabilitiesKeyDataRegistryEnabled: boolString(drEnabled),
 		}
 		if drEnabled {
-			cm.Data[capabilitiesKeyDataRegistryNS] = drNamespace
+			cm.Data[capabilitiesKeyDataRegistryNS] = dataRegistryNamespaceName
 		}
 		return controllerutil.SetControllerReference(feast, cm, rr.Client.Scheme())
 	})
@@ -94,28 +96,24 @@ func (m *Module) reconcileCapabilitiesConfigMap(ctx context.Context, rr *odhtype
 		"operation", op,
 		"featureStoreEnabled", fsEnabled,
 		"dataRegistryEnabled", drEnabled,
-		"dataRegistryNamespace", drNamespace,
+		"dataRegistryNamespace", dataRegistryNamespaceName,
 	)
 
 	return nil
 }
 
-// resolveCapabilities returns the effective capability states and namespace.
+// resolveCapabilities returns the effective capability states.
 // When spec.capabilities is present on the CR it is authoritative; otherwise
 // the module falls back to its process-level environment configuration.
-func (m *Module) resolveCapabilities(feast *componentApi.FeastOperator) (fsEnabled, drEnabled bool, drNamespace string) {
+// The data registry namespace is always rhoai-data-registry (hardcoded).
+func (m *Module) resolveCapabilities(feast *componentApi.FeastOperator) (fsEnabled, drEnabled bool) {
 	if feast.Spec.Capabilities != nil {
 		fsEnabled = feast.Spec.Capabilities.FeatureStore.ManagementState == operatorv1.Managed
 		drEnabled = feast.Spec.Capabilities.DataRegistry.ManagementState == operatorv1.Managed
-		drNamespace = feast.Spec.Capabilities.DataRegistry.Namespace
 	} else {
 		fsEnabled = m.cfg.FeatureStoreEnabled
 		drEnabled = m.cfg.DataRegistryEnabled
 	}
 
-	if drNamespace == "" {
-		drNamespace = dataRegistryNamespaceName
-	}
-
-	return fsEnabled, drEnabled, drNamespace
+	return fsEnabled, drEnabled
 }

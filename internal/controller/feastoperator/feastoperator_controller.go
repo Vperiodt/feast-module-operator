@@ -161,7 +161,7 @@ func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.Recon
 		return fmt.Errorf("instance is not a FeastOperator")
 	}
 
-	fsEnabled, drEnabled, _ := m.resolveCapabilities(feast)
+	fsEnabled, drEnabled := m.resolveCapabilities(feast)
 	if fsEnabled || drEnabled {
 		log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
 			"featureStoreEnabled", fsEnabled,

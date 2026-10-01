@@ -240,7 +240,7 @@ func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) 
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
-		DataRegistry: componentApi.DataRegistrySpec{ManagementState: operatorv1.Managed},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 

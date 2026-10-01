@@ -39,16 +39,15 @@ const (
 // reconcileDataRegistryNamespace provisions the dedicated Data Registry namespace
 // when the capability is enabled.
 //
-// Resolution order for namespace name:
-//  1. spec.capabilities.dataRegistry.namespace (when spec.capabilities is present)
-//  2. Default: rhoai-data-registry
+// The namespace is always rhoai-data-registry (hardcoded). Custom namespace
+// selection is deferred.
 func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	feast, ok := rr.Instance.(*componentApi.FeastOperator)
 	if !ok {
 		return errors.New("instance is not a FeastOperator")
 	}
 
-	_, drEnabled, drNamespace := m.resolveCapabilities(feast)
+	_, drEnabled := m.resolveCapabilities(feast)
 	if !drEnabled {
 		return nil
 	}
@@ -57,7 +56,7 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: drNamespace,
+			Name: dataRegistryNamespaceName,
 		},
 	}
 
@@ -69,11 +68,11 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to reconcile Data Registry namespace %s: %w", drNamespace, err)
+		return fmt.Errorf("failed to reconcile Data Registry namespace %s: %w", dataRegistryNamespaceName, err)
 	}
 
 	log.V(1).Info("Reconciled Data Registry namespace",
-		"namespace", drNamespace,
+		"namespace", dataRegistryNamespaceName,
 		"operation", op,
 	)
 

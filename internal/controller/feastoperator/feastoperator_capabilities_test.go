@@ -144,10 +144,7 @@ func TestReconcileCapabilitiesFromSpecOverridesEnv(t *testing.T) {
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
-		DataRegistry: componentApi.DataRegistrySpec{
-			ManagementState: operatorv1.Managed,
-			Namespace:       "catalog-prod",
-		},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
@@ -164,7 +161,7 @@ func TestReconcileCapabilitiesFromSpecOverridesEnv(t *testing.T) {
 	}, cm)).To(Succeed())
 	g.Expect(cm.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
 	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("true"))
-	g.Expect(cm.Data[capabilitiesKeyDataRegistryNS]).To(Equal("catalog-prod"))
+	g.Expect(cm.Data[capabilitiesKeyDataRegistryNS]).To(Equal("rhoai-data-registry"))
 }
 
 func TestReconcileCapabilitiesFromSpecDefaultNamespace(t *testing.T) {
@@ -174,10 +171,7 @@ func TestReconcileCapabilitiesFromSpecDefaultNamespace(t *testing.T) {
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
-		DataRegistry: componentApi.DataRegistrySpec{
-			ManagementState: operatorv1.Managed,
-			// Namespace omitted — should default to rhoai-data-registry
-		},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
@@ -226,7 +220,7 @@ func TestReconcileCapabilitiesNoNamespaceKeyWhenDRDisabled(t *testing.T) {
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
-		DataRegistry: componentApi.DataRegistrySpec{ManagementState: operatorv1.Removed},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 

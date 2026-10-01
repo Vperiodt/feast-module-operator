@@ -107,39 +107,6 @@ func TestReconcileDataRegistryNamespaceSkippedWhenDisabled(t *testing.T) {
 	g.Expect(nsList.Items).To(BeEmpty())
 }
 
-func TestReconcileDataRegistryNamespaceCustomFromSpec(t *testing.T) {
-	g := NewWithT(t)
-
-	scheme := initNamespaceTestScheme()
-	feast := newTestFeastOperator()
-	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
-		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
-		DataRegistry: componentApi.DataRegistrySpec{
-			ManagementState: operatorv1.Managed,
-			Namespace:       "catalog-prod",
-		},
-	}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
-
-	m := newCapabilitiesTestModule(t, false, false)
-	rr := &odhtypes.ReconciliationRequest{
-		Instance: feast,
-		Client:   cl,
-	}
-
-	g.Expect(m.reconcileDataRegistryNamespace(context.Background(), rr)).To(Succeed())
-
-	// Custom namespace should be created
-	ns := &corev1.Namespace{}
-	g.Expect(cl.Get(context.Background(), client.ObjectKey{Name: "catalog-prod"}, ns)).To(Succeed())
-	g.Expect(ns.Labels[dataRegistryEnabledLabelKey]).To(Equal(dataRegistryEnabledLabelValue))
-
-	// Default namespace should NOT be created
-	defaultNS := &corev1.Namespace{}
-	err := cl.Get(context.Background(), client.ObjectKey{Name: dataRegistryNamespaceName}, defaultNS)
-	g.Expect(err).To(HaveOccurred())
-}
-
 func TestReconcileDataRegistryNamespaceSkippedWhenDRRemovedInSpec(t *testing.T) {
 	g := NewWithT(t)
 
@@ -147,7 +114,7 @@ func TestReconcileDataRegistryNamespaceSkippedWhenDRRemovedInSpec(t *testing.T) 
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: operatorv1.Managed},
-		DataRegistry: componentApi.DataRegistrySpec{ManagementState: operatorv1.Removed},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: operatorv1.Removed},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
