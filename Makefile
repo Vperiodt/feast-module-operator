@@ -214,6 +214,9 @@ deploy-helm: ## Deploy controller via Helm chart.
 		helm_extra="$(HELM_EXTRA_ARGS)"; \
 		if [ "$(SKIP_HELM_CRDS)" = "1" ] || $(KUBECTL) get crd feastoperators.components.platform.opendatahub.io >/dev/null 2>&1; then \
 			echo "Skipping Helm CRD install (CRD already on cluster or SKIP_HELM_CRDS=1)"; \
+			echo "Applying CRD update from config/crd/bases/ ..."; \
+			$(KUBECTL) apply --server-side --force-conflicts -f config/crd/bases/ || \
+				echo "WARNING: CRD update failed; run 'make install' before upgrading" >&2; \
 			helm_extra="$$helm_extra --skip-crds"; \
 			if [ -f config/chart/templates/apiextensions.k8s.io_v1_customresourcedefinition.yaml ]; then \
 				echo "WARNING: CRD still in chart templates/; regenerate chart with 'make helm' so CRDs live under crds/ and --skip-crds applies." >&2; \

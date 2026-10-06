@@ -20,40 +20,28 @@ fi
 
 if [[ "${USE_LOCAL:-}" == "true" ]] && [[ -d "${PROJECT_ROOT}/../feast" ]]; then
     echo "Copying manifests from adjacent feast checkout"
+    local_commit="$(git -C "${PROJECT_ROOT}/../feast" rev-parse HEAD 2>/dev/null || echo "local-unknown")"
+    if ! git -C "${PROJECT_ROOT}/../feast" diff --quiet 2>/dev/null; then
+        local_commit="${local_commit}-dirty"
+    fi
     rm -rf "${DST_MANIFESTS_DIR}"
     mkdir -p "${DST_MANIFESTS_DIR}"
     cp -a "${PROJECT_ROOT}/../feast/${SOURCE_PATH}/." "${DST_MANIFESTS_DIR}/"
-    echo "${COMMIT_SHA}" > "${DST_MANIFESTS_DIR}/.manifest-source-commit"
-    echo "Manifests copied to ${DST_MANIFESTS_DIR}"
+    echo "${local_commit}" > "${DST_MANIFESTS_DIR}/.manifest-source-commit"
+    echo "Manifests copied to ${DST_MANIFESTS_DIR} (local commit: ${local_commit})"
     exit 0
 fi
 
 MARKER_FILE="${DST_MANIFESTS_DIR}/.manifest-source-commit"
-if [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${DST_MANIFESTS_DIR}/manager/manager.yaml" ]]; then
-    if [[ ! -f "${MARKER_FILE}" ]]; then
-        echo "${COMMIT_SHA}" > "${MARKER_FILE}"
-    elif [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" != "${COMMIT_SHA}" ]]; then
-        echo "WARNING: bundled manifests were fetched at $(cat "${MARKER_FILE}"), expected ${COMMIT_SHA}" >&2
-        echo "Re-fetching to match expected commit (set FORCE_GET_MANIFESTS=true to always refresh)"
-        # Fall through to re-download below instead of exiting
-    else
-        echo "Bundled manifests present under ${DST_MANIFESTS_DIR}, skipping download"
-        echo "(set FORCE_GET_MANIFESTS=true to re-fetch from GitHub)"
-        exit 0
-    fi
-    # If marker was just written or matches, exit; otherwise fall through
-    if [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" == "${COMMIT_SHA}" ]]; then
-        echo "Bundled manifests present under ${DST_MANIFESTS_DIR}, skipping download"
-        echo "(set FORCE_GET_MANIFESTS=true to re-fetch from GitHub)"
-        exit 0
-    fi
-fi
-
 if [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${MARKER_FILE}" ]]; then
     if [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" == "${COMMIT_SHA}" ]]; then
         echo "Manifests already at ${COMMIT_SHA}, skipping download (set FORCE_GET_MANIFESTS=true to refresh)"
         exit 0
     fi
+    echo "WARNING: bundled manifests were fetched at $(cat "${MARKER_FILE}"), expected ${COMMIT_SHA}" >&2
+    echo "Re-fetching to match expected commit (set FORCE_GET_MANIFESTS=true to always refresh)"
+elif [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${DST_MANIFESTS_DIR}/manager/manager.yaml" ]]; then
+    echo "WARNING: manifests present but no provenance marker; re-fetching to ensure correct version" >&2
 fi
 
 TMP_DIR=$(mktemp -d -t "odh-feast-manifests.XXXXXXXXXX")

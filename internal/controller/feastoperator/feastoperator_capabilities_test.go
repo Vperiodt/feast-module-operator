@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -237,4 +238,189 @@ func TestReconcileCapabilitiesNoNamespaceKeyWhenDRDisabled(t *testing.T) {
 	g.Expect(cm.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("false"))
 	_, hasNSKey := cm.Data[capabilitiesKeyDataRegistryNS]
 	g.Expect(hasNSKey).To(BeFalse(), "dataRegistryNamespace should not be set when DR is disabled")
+}
+
+func TestCapabilitiesDataHash(t *testing.T) {
+	g := NewWithT(t)
+
+	h1 := capabilitiesDataHash(map[string]string{
+		"featureStoreEnabled": "true",
+		"dataRegistryEnabled": "false",
+	})
+	h2 := capabilitiesDataHash(map[string]string{
+		"dataRegistryEnabled": "false",
+		"featureStoreEnabled": "true",
+	})
+	g.Expect(h1).To(Equal(h2), "hash should be order-independent")
+	g.Expect(h1).To(HaveLen(16))
+
+	h3 := capabilitiesDataHash(map[string]string{
+		"featureStoreEnabled": "true",
+		"dataRegistryEnabled": "true",
+	})
+	g.Expect(h3).NotTo(Equal(h1), "different data should produce different hash")
+}
+
+func initCapabilitiesRolloutTestScheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(componentApi.AddToScheme(scheme))
+	utilruntime.Must(appsv1.SchemeBuilder.AddToScheme(scheme))
+	return scheme
+}
+
+func TestTriggerCapabilityRolloutAnnotatesDeployment(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesRolloutTestScheme()
+	feast := newTestFeastOperator()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capabilitiesConfigMapName,
+			Namespace: "test-ns",
+		},
+		Data: map[string]string{
+			capabilitiesKeyFeatureStoreEnabled: "true",
+			capabilitiesKeyDataRegistryEnabled: "false",
+		},
+	}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName,
+			Namespace: "test-ns",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "feast"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "feast"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "manager",
+						Image: "test:latest",
+					}},
+				},
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm, deploy).Build()
+
+	m := newCapabilitiesTestModule(t, true, false)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.triggerCapabilityRolloutIfNeeded(context.Background(), rr)).To(Succeed())
+
+	updated := &appsv1.Deployment{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      deploymentName,
+		Namespace: "test-ns",
+	}, updated)).To(Succeed())
+	g.Expect(updated.Spec.Template.Annotations).To(HaveKey(capabilitiesHashAnnotation))
+	g.Expect(updated.Spec.Template.Annotations[capabilitiesHashAnnotation]).To(HaveLen(16))
+}
+
+func TestTriggerCapabilityRolloutSkipsWhenHashUnchanged(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesRolloutTestScheme()
+	feast := newTestFeastOperator()
+	cmData := map[string]string{
+		capabilitiesKeyFeatureStoreEnabled: "true",
+		capabilitiesKeyDataRegistryEnabled: "false",
+	}
+	hash := capabilitiesDataHash(cmData)
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capabilitiesConfigMapName,
+			Namespace: "test-ns",
+		},
+		Data: cmData,
+	}
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deploymentName,
+			Namespace: "test-ns",
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "feast"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      map[string]string{"app": "feast"},
+					Annotations: map[string]string{capabilitiesHashAnnotation: hash},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "manager",
+						Image: "test:latest",
+					}},
+				},
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm, deploy).Build()
+
+	m := newCapabilitiesTestModule(t, true, false)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.triggerCapabilityRolloutIfNeeded(context.Background(), rr)).To(Succeed())
+
+	updated := &appsv1.Deployment{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{
+		Name:      deploymentName,
+		Namespace: "test-ns",
+	}, updated)).To(Succeed())
+	g.Expect(updated.Spec.Template.Annotations[capabilitiesHashAnnotation]).To(Equal(hash))
+}
+
+func TestTriggerCapabilityRolloutSkipsWhenNoDeployment(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesRolloutTestScheme()
+	feast := newTestFeastOperator()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capabilitiesConfigMapName,
+			Namespace: "test-ns",
+		},
+		Data: map[string]string{
+			capabilitiesKeyFeatureStoreEnabled: "true",
+			capabilitiesKeyDataRegistryEnabled: "false",
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm).Build()
+
+	m := newCapabilitiesTestModule(t, true, false)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.triggerCapabilityRolloutIfNeeded(context.Background(), rr)).To(Succeed())
+}
+
+func TestTriggerCapabilityRolloutSkipsWhenNoConfigMap(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initCapabilitiesRolloutTestScheme()
+	feast := newTestFeastOperator()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	m := newCapabilitiesTestModule(t, true, false)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.triggerCapabilityRolloutIfNeeded(context.Background(), rr)).To(Succeed())
 }

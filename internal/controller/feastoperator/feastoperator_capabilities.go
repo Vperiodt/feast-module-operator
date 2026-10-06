@@ -18,12 +18,18 @@ package feastoperator
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -38,6 +44,8 @@ const (
 	capabilitiesKeyFeatureStoreEnabled = "featureStoreEnabled"
 	capabilitiesKeyDataRegistryEnabled = "dataRegistryEnabled"
 	capabilitiesKeyDataRegistryNS      = "dataRegistryNamespace"
+
+	capabilitiesHashAnnotation = "feast.dev/capabilities-hash"
 )
 
 func boolString(value bool) string {
@@ -115,4 +123,80 @@ func (m *Module) resolveCapabilities(feast *componentApi.FeastOperator) (fsEnabl
 	}
 
 	return fsEnabled, drEnabled
+}
+
+// triggerCapabilityRolloutIfNeeded annotates the upstream feast-operator Deployment's
+// pod template with a hash of the capabilities ConfigMap data. The upstream operator
+// reads the ConfigMap at startup only, so updating the ConfigMap alone is not enough;
+// the annotation change triggers a rolling restart.
+func (m *Module) triggerCapabilityRolloutIfNeeded(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
+	log := logf.FromContext(ctx)
+
+	cm := &corev1.ConfigMap{}
+	if err := rr.Client.Get(ctx, client.ObjectKey{
+		Name:      capabilitiesConfigMapName,
+		Namespace: m.cfg.ApplicationsNamespace,
+	}, cm); err != nil {
+		if k8serr.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get capabilities ConfigMap: %w", err)
+	}
+
+	hash := capabilitiesDataHash(cm.Data)
+
+	deploy := &appsv1.Deployment{}
+	deployKey := client.ObjectKey{
+		Name:      deploymentName,
+		Namespace: m.cfg.ApplicationsNamespace,
+	}
+	if err := rr.Client.Get(ctx, deployKey, deploy); err != nil {
+		if k8serr.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get Deployment %s for capability rollout check: %w", deploymentName, err)
+	}
+
+	currentHash := ""
+	if deploy.Spec.Template.Annotations != nil {
+		currentHash = deploy.Spec.Template.Annotations[capabilitiesHashAnnotation]
+	}
+	if currentHash == hash {
+		return nil
+	}
+
+	patch := client.MergeFrom(deploy.DeepCopy())
+	if deploy.Spec.Template.Annotations == nil {
+		deploy.Spec.Template.Annotations = map[string]string{}
+	}
+	deploy.Spec.Template.Annotations[capabilitiesHashAnnotation] = hash
+	if err := rr.Client.Patch(ctx, deploy, patch); err != nil {
+		return fmt.Errorf("failed to patch Deployment %s with capabilities hash: %w", deploymentName, err)
+	}
+
+	log.Info("Patched Deployment pod template to trigger rollout after capability change",
+		"deployment", deploymentName,
+		"capabilitiesHash", hash,
+	)
+
+	return nil
+}
+
+// capabilitiesDataHash returns a short deterministic hash of ConfigMap data
+// suitable for use as a pod template annotation.
+func capabilitiesDataHash(data map[string]string) string {
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte("="))
+		h.Write([]byte(data[k]))
+		h.Write([]byte("\n"))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }

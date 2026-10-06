@@ -130,6 +130,7 @@ func NewReconciler(
 			deploy.WithCache(),
 			deploy.WithApplyOrder(),
 		)).
+		WithAction(m.triggerCapabilityRolloutIfNeeded).
 		WithAction(deployments.NewAction()).
 		WithAction(gc.NewAction(
 			gc.InNamespace(cfg.ApplicationsNamespace),
