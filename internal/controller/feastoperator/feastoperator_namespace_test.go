@@ -130,3 +130,53 @@ func TestReconcileDataRegistryNamespaceSkippedWhenDRRemovedInSpec(t *testing.T) 
 	g.Expect(cl.List(context.Background(), nsList)).To(Succeed())
 	g.Expect(nsList.Items).To(BeEmpty())
 }
+
+func TestReconcileDataRegistryNamespaceRemovesLabelWhenDisabled(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initNamespaceTestScheme()
+	feast := newTestFeastOperator()
+	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
+		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
+		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityRemoved},
+	}
+	existing := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: dataRegistryNamespaceName,
+			Labels: map[string]string{
+				dataRegistryEnabledLabelKey: dataRegistryEnabledLabelValue,
+				"other-label":              "keep-me",
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, existing).Build()
+
+	m := newCapabilitiesTestModule(t, true, true)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.reconcileDataRegistryNamespace(context.Background(), rr)).To(Succeed())
+
+	ns := &corev1.Namespace{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKey{Name: dataRegistryNamespaceName}, ns)).To(Succeed())
+	g.Expect(ns.Labels).NotTo(HaveKey(dataRegistryEnabledLabelKey), "enabled label should be removed")
+	g.Expect(ns.Labels["other-label"]).To(Equal("keep-me"), "other labels should be preserved")
+}
+
+func TestReconcileDataRegistryNamespaceNoopWhenDisabledAndNoNamespace(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := initNamespaceTestScheme()
+	feast := newTestFeastOperator()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+
+	m := newCapabilitiesTestModule(t, false, false)
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	g.Expect(m.reconcileDataRegistryNamespace(context.Background(), rr)).To(Succeed())
+}

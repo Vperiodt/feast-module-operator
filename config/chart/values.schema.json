@@ -112,10 +112,6 @@
           },
           "type": "object"
         },
-        "installCRDs": {
-          "type": "boolean",
-          "default": true
-        },
         "upgradeGates": {
           "oneOf": [
             {
@@ -142,8 +138,7 @@
         "leaderElect",
         "serviceAccount",
         "imagePullSecret",
-        "config",
-        "installCRDs"
+        "config"
       ]
     }
   }

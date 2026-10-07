@@ -22,7 +22,9 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -49,7 +51,7 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 
 	_, drEnabled := m.resolveCapabilities(feast)
 	if !drEnabled {
-		return nil
+		return m.removeDataRegistryLabel(ctx, rr)
 	}
 
 	log := logf.FromContext(ctx)
@@ -74,6 +76,37 @@ func (m *Module) reconcileDataRegistryNamespace(ctx context.Context, rr *odhtype
 	log.V(1).Info("Reconciled Data Registry namespace",
 		"namespace", dataRegistryNamespaceName,
 		"operation", op,
+	)
+
+	return nil
+}
+
+// removeDataRegistryLabel removes the dataregistry.opendatahub.io/enabled label
+// from the Data Registry namespace when the capability is disabled. The namespace
+// itself is preserved to avoid deleting user data.
+func (m *Module) removeDataRegistryLabel(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
+	log := logf.FromContext(ctx)
+
+	ns := &corev1.Namespace{}
+	if err := rr.Client.Get(ctx, client.ObjectKey{Name: dataRegistryNamespaceName}, ns); err != nil {
+		if k8serr.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get Data Registry namespace %s: %w", dataRegistryNamespaceName, err)
+	}
+
+	if ns.Labels[dataRegistryEnabledLabelKey] != dataRegistryEnabledLabelValue {
+		return nil
+	}
+
+	patch := client.MergeFrom(ns.DeepCopy())
+	delete(ns.Labels, dataRegistryEnabledLabelKey)
+	if err := rr.Client.Patch(ctx, ns, patch); err != nil {
+		return fmt.Errorf("failed to remove enabled label from Data Registry namespace %s: %w", dataRegistryNamespaceName, err)
+	}
+
+	log.Info("Removed enabled label from Data Registry namespace",
+		"namespace", dataRegistryNamespaceName,
 	)
 
 	return nil

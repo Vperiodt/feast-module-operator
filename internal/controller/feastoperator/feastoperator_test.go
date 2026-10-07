@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -34,7 +35,7 @@ import (
 	moduleconfig "github.com/opendatahub-io/feast-module-operator/pkg/config"
 	"github.com/opendatahub-io/opendatahub-operator/v2/api/common"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/cluster"
-	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
+
 	odhtypes "github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/types"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/metadata/labels"
 )
@@ -196,7 +197,7 @@ func TestGetSetPlatformRelease(t *testing.T) {
 	g.Expect(obj.Status.Releases).To(HaveLen(2))
 }
 
-func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
+func TestCleanupClusterResourcesRunsWhenCapabilityAbsent(t *testing.T) {
 	g := NewWithT(t)
 
 	scheme := runtime.NewScheme()
@@ -205,8 +206,7 @@ func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
 
 	feast := newTestFeastOperator()
-	// No spec.capabilities set — even though env defaults to true,
-	// cleanup should proceed to avoid finalizer deadlock.
+	// No spec.capabilities set — cleanup should proceed regardless of env defaults.
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
 
 	m := &Module{
@@ -218,30 +218,37 @@ func TestCleanupClusterResourcesDeferredWhenCapabilityEnabled(t *testing.T) {
 	}
 
 	rr := &odhtypes.ReconciliationRequest{
-		Instance:   feast,
-		Client:     cl,
-		Conditions: conditions.NewManager(feast, "Ready"),
+		Instance: feast,
+		Client:   cl,
 	}
 
-	// With spec.capabilities absent, cleanup proceeds regardless of env defaults.
 	g.Expect(m.cleanupClusterResources(context.Background(), rr)).To(Succeed())
 }
 
-func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) {
+func TestCleanupClusterResourcesRunsEvenWhenCapabilitiesManaged(t *testing.T) {
 	g := NewWithT(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(componentApi.AddToScheme(scheme))
+	utilruntime.Must(rbacv1.AddToScheme(scheme))
 
 	feast := newTestFeastOperator()
 	feast.Spec.Capabilities = &componentApi.CapabilitiesSpec{
 		FeatureStore: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityRemoved},
 		DataRegistry: componentApi.CapabilitySpec{ManagementState: componentApi.CapabilityManaged},
 	}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast).Build()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capabilitiesConfigMapName,
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				labels.ODH.Component(componentName): labels.True,
+			},
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm).Build()
 
-	// Env says both disabled — but spec.capabilities overrides
 	m := &Module{
 		cfg: &moduleconfig.Config{
 			ApplicationsNamespace: "test-ns",
@@ -251,14 +258,18 @@ func TestCleanupClusterResourcesDeferredWhenSpecCapabilityEnabled(t *testing.T) 
 	}
 
 	rr := &odhtypes.ReconciliationRequest{
-		Instance:   feast,
-		Client:     cl,
-		Conditions: conditions.NewManager(feast, "Ready"),
+		Instance: feast,
+		Client:   cl,
 	}
 
-	err := m.cleanupClusterResources(context.Background(), rr)
-	g.Expect(err).To(HaveOccurred())
-	g.Expect(err.Error()).To(ContainSubstring("capabilities still enabled"))
+	// Finalizer must complete even when capabilities are still Managed.
+	// Deferring creates a deadlock: the CR is being deleted, so its spec
+	// will never change, but the finalizer waits for Removed.
+	g.Expect(m.cleanupClusterResources(context.Background(), rr)).To(Succeed())
+
+	// ConfigMap should be deleted
+	getErr := cl.Get(context.Background(), client.ObjectKeyFromObject(cm), &corev1.ConfigMap{})
+	g.Expect(k8serr.IsNotFound(getErr)).To(BeTrue())
 }
 
 func TestCleanupClusterResourcesRunsWhenBothCapabilitiesRemoved(t *testing.T) {

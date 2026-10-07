@@ -39,7 +39,6 @@ import (
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/render/kustomize"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/status/deployments"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/actions/status/releases"
-	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/conditions"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/handlers"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/predicates"
 	"github.com/opendatahub-io/opendatahub-operator/v2/pkg/controller/predicates/component"
@@ -150,38 +149,20 @@ func NewReconciler(
 	return nil
 }
 
-const conditionReasonPendingCapabilityRemoval = "PendingCapabilityRemoval"
-
 // cleanupClusterResources removes cluster-scoped resources (ClusterRoles, ClusterRoleBindings)
 // that cannot use ownerReferences for garbage collection.
+//
+// This finalizer always runs to completion when the CR is deleted. It does NOT
+// defer based on capability state — the DSC controller is responsible for
+// recreating the FeastOperator CR with the correct capabilities after a
+// delete+create cycle. Deferring cleanup when capabilities are still Managed
+// creates a deadlock: the CR is being deleted so its spec.capabilities will
+// never change, but the finalizer waits for them to become Removed.
 func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
-	feast, ok := rr.Instance.(*componentApi.FeastOperator)
-	if !ok {
+	if _, ok := rr.Instance.(*componentApi.FeastOperator); !ok {
 		return fmt.Errorf("instance is not a FeastOperator")
-	}
-
-	// Only defer cleanup when capabilities are explicitly set and still Managed.
-	// When spec.capabilities is absent (legacy/default CRs), always allow cleanup
-	// to proceed — otherwise the CR gets stuck in Terminating forever because
-	// the env fallback defaults both toggles to true.
-	if feast.Spec.Capabilities != nil {
-		fsEnabled, drEnabled := m.resolveCapabilities(feast)
-		if fsEnabled || drEnabled {
-			log.Info("Deferring cluster resource cleanup while capabilities remain enabled",
-				"featureStoreEnabled", fsEnabled,
-				"dataRegistryEnabled", drEnabled,
-			)
-			rr.Conditions.MarkFalse(
-				"Ready",
-				conditions.WithReason(conditionReasonPendingCapabilityRemoval),
-				conditions.WithMessage(
-					"cluster resource cleanup deferred until both feature store and data registry capabilities are removed",
-				),
-			)
-			return fmt.Errorf("capabilities still enabled, deferring cleanup")
-		}
 	}
 
 	listOpts := []client.ListOption{
