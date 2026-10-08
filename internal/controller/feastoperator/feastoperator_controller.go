@@ -60,8 +60,8 @@ import (
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;delete;update
 // +kubebuilder:rbac:groups=config.openshift.io,resources=apiservers,verbs=get;list;watch
 // +kubebuilder:rbac:groups=sparkoperator.k8s.io,resources=sparkapplications,verbs=get;create;delete
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete;deletecollection
 // +kubebuilder:rbac:groups="",resources=pods/exec,verbs=create
 // +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
@@ -172,6 +172,13 @@ func (m *Module) cleanupClusterResources(ctx context.Context, rr *odhtypes.Recon
 	}
 
 	log.Info("Cleaning up cluster-scoped resources for FeastOperator")
+
+	// The platform may delete the CR immediately when both capabilities become
+	// Removed, without a normal reconcile that clears the namespace label.
+	// Keep the namespace and its data, but stop advertising an enabled registry.
+	if err := m.removeDataRegistryLabel(ctx, rr); err != nil {
+		return err
+	}
 
 	cm := &corev1.ConfigMap{}
 	err := rr.Client.Get(ctx, client.ObjectKey{

@@ -7,7 +7,6 @@ image:
   repository: quay.io/opendatahub/odh-feast-module-operator
   tag: odh-stable
 imagePullSecret: ""
-installCRDs: true
 leaderElect: true
 nameOverride: ""
 namespace: ""

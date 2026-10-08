@@ -42,6 +42,12 @@ if [[ -z "${container_tool}" ]]; then
     fi
 fi
 
+container_tool_name="$(basename "${container_tool}")"
+if [[ "${container_tool_name}" == "docker" && "${INSECURE_REGISTRY:-false}" == "true" ]]; then
+    echo "INSECURE_REGISTRY=true is unsupported with Docker; configure the Docker daemon for the registry or use Podman" >&2
+    exit 1
+fi
+
 discover_external_registry_host() {
     if [[ -n "${OCP_REGISTRY_HOST:-}" ]]; then
         printf '%s\n' "${OCP_REGISTRY_HOST}"
@@ -131,7 +137,7 @@ echo "Tagging ${source_image} as ${external_image}" >&2
 "${container_tool}" tag "${source_image}" "${external_image}"
 
 echo "Pushing ${external_image}" >&2
-if [[ "${container_tool}" == "podman" ]]; then
+if [[ "${container_tool_name}" == "podman" ]]; then
     "${container_tool}" push "${external_image}" --tls-verify="${tls_verify}" >/dev/null
 else
     "${container_tool}" push "${external_image}" >/dev/null

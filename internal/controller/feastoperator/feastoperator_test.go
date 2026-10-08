@@ -247,7 +247,14 @@ func TestCleanupClusterResourcesRunsEvenWhenCapabilitiesManaged(t *testing.T) {
 			},
 		},
 	}
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm).Build()
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name: dataRegistryNamespaceName,
+		Labels: map[string]string{
+			dataRegistryEnabledLabelKey: dataRegistryEnabledLabelValue,
+			"user-label":              "preserved",
+		},
+	}}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm, ns).Build()
 
 	m := &Module{
 		cfg: &moduleconfig.Config{
@@ -270,6 +277,9 @@ func TestCleanupClusterResourcesRunsEvenWhenCapabilitiesManaged(t *testing.T) {
 	// ConfigMap should be deleted
 	getErr := cl.Get(context.Background(), client.ObjectKeyFromObject(cm), &corev1.ConfigMap{})
 	g.Expect(k8serr.IsNotFound(getErr)).To(BeTrue())
+	g.Expect(cl.Get(context.Background(), client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+	g.Expect(ns.Labels).NotTo(HaveKey(dataRegistryEnabledLabelKey))
+	g.Expect(ns.Labels["user-label"]).To(Equal("preserved"))
 }
 
 func TestCleanupClusterResourcesRunsWhenBothCapabilitiesRemoved(t *testing.T) {

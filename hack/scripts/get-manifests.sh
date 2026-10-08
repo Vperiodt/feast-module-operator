@@ -7,6 +7,29 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPONENT_NAME="feastoperator"
 SOURCE_PATH="infra/feast-operator/config"
 DST_MANIFESTS_DIR="${PROJECT_ROOT}/config/manifests/${COMPONENT_NAME}"
+MARKER_FILE="${DST_MANIFESTS_DIR}/.manifest-source-commit"
+DIGEST_FILE="${DST_MANIFESTS_DIR}/.manifest-content-sha256"
+
+# The commit marker records provenance; the digest detects later edits to the
+# bundled files so a stale marker cannot cause an incorrect skip.
+manifest_digest() {
+    python3 - "$1" <<'PY'
+import hashlib
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+digest = hashlib.sha256()
+for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    relative = path.relative_to(root).as_posix()
+    if relative in {".manifest-source-commit", ".manifest-content-sha256"}:
+        continue
+    digest.update(relative.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(hashlib.sha256(path.read_bytes()).digest())
+print(digest.hexdigest())
+PY
+}
 
 if [[ "${ODH_PLATFORM_TYPE:-OpenDataHub}" == "OpenDataHub" ]]; then
     echo "Downloading manifests for ODH"
@@ -21,25 +44,30 @@ fi
 if [[ "${USE_LOCAL:-}" == "true" ]] && [[ -d "${PROJECT_ROOT}/../feast" ]]; then
     echo "Copying manifests from adjacent feast checkout"
     local_commit="$(git -C "${PROJECT_ROOT}/../feast" rev-parse HEAD 2>/dev/null || echo "local-unknown")"
-    if ! git -C "${PROJECT_ROOT}/../feast" diff --quiet 2>/dev/null; then
+    if [[ -n "$(git -C "${PROJECT_ROOT}/../feast" status --porcelain --untracked-files=all 2>/dev/null)" ]]; then
         local_commit="${local_commit}-dirty"
     fi
     rm -rf "${DST_MANIFESTS_DIR}"
     mkdir -p "${DST_MANIFESTS_DIR}"
     cp -a "${PROJECT_ROOT}/../feast/${SOURCE_PATH}/." "${DST_MANIFESTS_DIR}/"
     echo "${local_commit}" > "${DST_MANIFESTS_DIR}/.manifest-source-commit"
+    manifest_digest "${DST_MANIFESTS_DIR}" > "${DIGEST_FILE}"
     echo "Manifests copied to ${DST_MANIFESTS_DIR} (local commit: ${local_commit})"
     exit 0
 fi
 
-MARKER_FILE="${DST_MANIFESTS_DIR}/.manifest-source-commit"
 if [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${MARKER_FILE}" ]]; then
     if [[ "$(tr -d '[:space:]' < "${MARKER_FILE}")" == "${COMMIT_SHA}" ]]; then
-        echo "Manifests already at ${COMMIT_SHA}, skipping download (set FORCE_GET_MANIFESTS=true to refresh)"
-        exit 0
+        if [[ -f "${DIGEST_FILE}" && -f "${DST_MANIFESTS_DIR}/manager/manager.yaml" \
+            && "$(tr -d '[:space:]' < "${DIGEST_FILE}")" == "$(manifest_digest "${DST_MANIFESTS_DIR}")" ]]; then
+            echo "Manifests already at ${COMMIT_SHA} with verified content, skipping download"
+            exit 0
+        fi
+        echo "WARNING: bundled manifest content does not match its recorded digest; re-fetching" >&2
+    else
+        echo "WARNING: bundled manifests were fetched at $(cat "${MARKER_FILE}"), expected ${COMMIT_SHA}" >&2
+        echo "Re-fetching to match expected commit (set FORCE_GET_MANIFESTS=true to always refresh)"
     fi
-    echo "WARNING: bundled manifests were fetched at $(cat "${MARKER_FILE}"), expected ${COMMIT_SHA}" >&2
-    echo "Re-fetching to match expected commit (set FORCE_GET_MANIFESTS=true to always refresh)"
 elif [[ "${FORCE_GET_MANIFESTS:-}" != "true" && -f "${DST_MANIFESTS_DIR}/manager/manager.yaml" ]]; then
     echo "WARNING: manifests present but no provenance marker; re-fetching to ensure correct version" >&2
 fi
@@ -79,5 +107,6 @@ rm -rf "${DST_MANIFESTS_DIR}"
 mkdir -p "${DST_MANIFESTS_DIR}"
 cp -a "${TMP_DIR}/${SOURCE_PATH}/." "${DST_MANIFESTS_DIR}/"
 echo "${COMMIT_SHA}" > "${MARKER_FILE}"
+manifest_digest "${DST_MANIFESTS_DIR}" > "${DIGEST_FILE}"
 
 echo "Manifests downloaded to ${DST_MANIFESTS_DIR}"
