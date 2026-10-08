@@ -18,13 +18,16 @@ package feastoperator
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -72,6 +75,48 @@ func newTestFeastOperator() *componentApi.FeastOperator {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: componentApi.FeastOperatorInstanceName,
 		},
+	}
+}
+
+func TestImageParamMapIncludesKubeRBACProxy(t *testing.T) {
+	g := NewWithT(t)
+	g.Expect(imageParamMap).To(HaveKey("RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE"))
+	g.Expect(imageParamMap["RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE"]).To(
+		Equal("RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE"),
+	)
+}
+
+func TestNewModuleProjectsKubeRBACProxyImage(t *testing.T) {
+	const image = "registry.example.com/odh-kube-rbac-proxy@sha256:1234"
+	t.Setenv("RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE", image)
+	for _, tc := range []struct {
+		name, platform, overlay string
+	}{
+		{name: "ODH", platform: string(cluster.OpenDataHub), overlay: overlayODH},
+		{name: "RHOAI", platform: string(cluster.SelfManagedRhoai), overlay: overlayRhoai},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifests := t.TempDir()
+			path := filepath.Join(manifests, componentName, tc.overlay, "params.env")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE=default\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewModule(&moduleconfig.Config{
+				PlatformName: tc.platform, ManifestsPath: manifests,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "RELATED_IMAGE_ODH_KUBE_RBAC_PROXY_IMAGE="+image) {
+				t.Fatalf("proxy image was not projected into %s: %s", path, data)
+			}
+		})
 	}
 }
 
