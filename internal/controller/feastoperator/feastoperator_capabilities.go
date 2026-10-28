@@ -65,6 +65,10 @@ const feastOperatorCapabilitiesFinalizer = "feast.dev/capabilities-config-cleanu
 // with uninstall anyway, leaving the Terminating ConfigMap to manual cleanup.
 const feastOperatorReleaseTimeout = 5 * time.Minute
 
+// capabilitiesCleanupTimeoutReason is the Warning event emitted when uninstall
+// continues while feast.dev/capabilities-config-cleanup still holds the ConfigMap.
+const capabilitiesCleanupTimeoutReason = "CapabilitiesCleanupTimeout"
+
 func boolString(value bool) string {
 	return strconv.FormatBool(value)
 }
@@ -249,24 +253,24 @@ func (m *Module) getCapabilitiesConfigMap(ctx context.Context, rr *odhtypes.Reco
 }
 
 // markCapabilitiesDisabled writes both capability flags as disabled into the
-// capabilities ConfigMap. This is the teardown intent the feast operator
-// reads: a Terminating ConfigMap with dataRegistryEnabled=false triggers its
-// Data Registry cleanup, while a Terminating ConfigMap with the flags still
-// enabled (manual deletion) does not.
+// capabilities ConfigMap, including one that is already terminating. The feast
+// operator treats dataRegistryEnabled=false on a Terminating ConfigMap as
+// teardown intent. The write is skipped when both flags are already disabled.
 func (m *Module) markCapabilitiesDisabled(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	cm, err := m.getCapabilitiesConfigMap(ctx, rr)
 	if err != nil || cm == nil {
 		return err
 	}
-	if cm.DeletionTimestamp != nil {
-		// Already terminating; the intent was written before the delete.
+	disabled := boolString(false)
+	if cm.Data[capabilitiesKeyFeatureStoreEnabled] == disabled &&
+		cm.Data[capabilitiesKeyDataRegistryEnabled] == disabled {
 		return nil
 	}
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
 	}
-	cm.Data[capabilitiesKeyFeatureStoreEnabled] = boolString(false)
-	cm.Data[capabilitiesKeyDataRegistryEnabled] = boolString(false)
+	cm.Data[capabilitiesKeyFeatureStoreEnabled] = disabled
+	cm.Data[capabilitiesKeyDataRegistryEnabled] = disabled
 	if err := rr.Client.Update(ctx, cm); err != nil {
 		return fmt.Errorf("failed to write teardown intent into capabilities ConfigMap %s: %w", capabilitiesConfigMapName, err)
 	}
@@ -295,8 +299,8 @@ func (m *Module) deleteCapabilitiesConfigMap(ctx context.Context, rr *odhtypes.R
 // has removed its finalizer from the Terminating capabilities ConfigMap,
 // signalling that its Data Registry cleanup finished. The ConfigMap
 // deletionTimestamp bounds the wait: after feastOperatorReleaseTimeout the
-// module proceeds without the feast operator, leaving manual cleanup of the
-// stuck Terminating ConfigMap as the recovery path.
+// module emits a Warning event and proceeds without the feast operator,
+// leaving manual cleanup of the stuck Terminating ConfigMap as the recovery path.
 func (m *Module) waitForFeastOperatorRelease(ctx context.Context, rr *odhtypes.ReconciliationRequest) error {
 	log := logf.FromContext(ctx)
 
@@ -323,11 +327,21 @@ func (m *Module) waitForFeastOperatorRelease(ctx context.Context, rr *odhtypes.R
 		)
 	}
 
+	heldSince := cm.DeletionTimestamp.UTC().Format(time.RFC3339)
 	log.Info("Timed out waiting for feast operator to release capabilities ConfigMap; proceeding with uninstall",
 		"configmap", capabilitiesConfigMapName,
+		"namespace", m.cfg.ApplicationsNamespace,
 		"finalizer", feastOperatorCapabilitiesFinalizer,
-		"heldSince", cm.DeletionTimestamp.UTC().Format(time.RFC3339),
+		"heldSince", heldSince,
 	)
+	if m.recorder != nil {
+		m.recorder.Eventf(rr.Instance, nil, corev1.EventTypeWarning, capabilitiesCleanupTimeoutReason, "Uninstall",
+			"Timed out waiting for finalizer %s on ConfigMap %s/%s (held since %s); uninstall continuing. Manual cleanup: kubectl patch cm %s -n %s --type=merge -p '{\"metadata\":{\"finalizers\":null}}'",
+			feastOperatorCapabilitiesFinalizer,
+			m.cfg.ApplicationsNamespace, capabilitiesConfigMapName, heldSince,
+			capabilitiesConfigMapName, m.cfg.ApplicationsNamespace,
+		)
+	}
 	return nil
 }
 

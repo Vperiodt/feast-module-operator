@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -500,6 +501,69 @@ func TestCleanupClusterResourcesWaitsForFeastOperatorRelease(t *testing.T) {
 	g.Expect(crbList.Items).To(BeEmpty())
 }
 
+func TestCleanupClusterResourcesDisablesAlreadyTerminatingConfigMap(t *testing.T) {
+	g := NewWithT(t)
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(componentApi.AddToScheme(scheme))
+	utilruntime.Must(rbacv1.AddToScheme(scheme))
+
+	feast := newTestFeastOperator()
+	// Deletion started before this finalizer, with the capability flags still
+	// enabled and the feast operator finalizer still held.
+	recent := metav1.Now()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      capabilitiesConfigMapName,
+			Namespace: "test-ns",
+			Finalizers: []string{
+				CapabilitiesConfigMapFinalizer,
+				feastOperatorCapabilitiesFinalizer,
+			},
+			DeletionTimestamp: &recent,
+		},
+		Data: map[string]string{
+			capabilitiesKeyFeatureStoreEnabled: "true",
+			capabilitiesKeyDataRegistryEnabled: "true",
+		},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm).Build()
+
+	m := &Module{
+		cfg: &moduleconfig.Config{
+			ApplicationsNamespace: "test-ns",
+			FeatureStoreEnabled:   false,
+			DataRegistryEnabled:   false,
+		},
+	}
+	rr := &odhtypes.ReconciliationRequest{
+		Instance: feast,
+		Client:   cl,
+	}
+
+	err := m.cleanupClusterResources(context.Background(), rr)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("waiting for feast operator"))
+
+	stored := &corev1.ConfigMap{}
+	g.Expect(cl.Get(context.Background(), client.ObjectKeyFromObject(cm), stored)).To(Succeed())
+	g.Expect(stored.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
+	g.Expect(stored.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("false"))
+	g.Expect(stored.Finalizers).To(ConsistOf(
+		CapabilitiesConfigMapFinalizer,
+		feastOperatorCapabilitiesFinalizer,
+	))
+
+	// A retry while the flags are already disabled must not write the ConfigMap again.
+	snapshot := stored.DeepCopy()
+	err = m.cleanupClusterResources(context.Background(), rr)
+	g.Expect(err).To(HaveOccurred())
+	g.Expect(err.Error()).To(ContainSubstring("waiting for feast operator"))
+	g.Expect(cl.Get(context.Background(), client.ObjectKeyFromObject(cm), stored)).To(Succeed())
+	g.Expect(stored).To(Equal(snapshot))
+}
+
 func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 	g := NewWithT(t)
 
@@ -525,12 +589,14 @@ func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(feast, cm).Build()
 
+	recorder := events.NewFakeRecorder(1)
 	m := &Module{
 		cfg: &moduleconfig.Config{
 			ApplicationsNamespace: "test-ns",
 			FeatureStoreEnabled:   false,
 			DataRegistryEnabled:   false,
 		},
+		recorder: recorder,
 	}
 
 	rr := &odhtypes.ReconciliationRequest{
@@ -543,10 +609,20 @@ func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 	g.Expect(m.cleanupClusterResources(context.Background(), rr)).To(Succeed())
 
 	// The ConfigMap is left Terminating, held only by the stuck feast
-	// operator finalizer; the module finalizer is gone.
+	// operator finalizer; the module finalizer is gone. Teardown intent is
+	// still written so a late feast-operator reconcile can observe it.
 	stored := &corev1.ConfigMap{}
 	g.Expect(cl.Get(context.Background(), client.ObjectKeyFromObject(cm), stored)).To(Succeed())
 	g.Expect(stored.Finalizers).To(ConsistOf(feastOperatorCapabilitiesFinalizer))
+	g.Expect(stored.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
+	g.Expect(stored.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("false"))
+	g.Expect(recorder.Events).To(Receive(And(
+		ContainSubstring("Warning "+capabilitiesCleanupTimeoutReason),
+		ContainSubstring(capabilitiesConfigMapName),
+		ContainSubstring("test-ns"),
+		ContainSubstring(feastOperatorCapabilitiesFinalizer),
+		ContainSubstring("kubectl patch"),
+	)))
 }
 
 func TestParseAndValidateOIDCIssuerURL(t *testing.T) {

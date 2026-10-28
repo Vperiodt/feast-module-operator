@@ -95,6 +95,7 @@ func NewReconciler(
 	if err != nil {
 		return err
 	}
+	m.recorder = mgr.GetEventRecorder(componentName)
 
 	r, err := reconciler.ReconcilerFor(mgr, &componentApi.FeastOperator{}).
 		Owns(&corev1.ConfigMap{}, reconciler.WithPredicates(capabilitiesConfigMapWatchPredicate())).
