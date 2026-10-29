@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -510,9 +511,10 @@ func TestCleanupClusterResourcesDisablesAlreadyTerminatingConfigMap(t *testing.T
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
 
 	feast := newTestFeastOperator()
-	// Deletion started before this finalizer, with the capability flags still
-	// enabled and the feast operator finalizer still held.
-	recent := metav1.Now()
+	// Deletion started long before this finalizer. The flags are still enabled,
+	// so the wait must be measured from the cleanup-start annotation rather
+	// than this old deletionTimestamp.
+	stale := metav1.Time{Time: metav1.Now().Add(-2 * feastOperatorReleaseTimeout)}
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      capabilitiesConfigMapName,
@@ -521,7 +523,7 @@ func TestCleanupClusterResourcesDisablesAlreadyTerminatingConfigMap(t *testing.T
 				CapabilitiesConfigMapFinalizer,
 				feastOperatorCapabilitiesFinalizer,
 			},
-			DeletionTimestamp: &recent,
+			DeletionTimestamp: &stale,
 		},
 		Data: map[string]string{
 			capabilitiesKeyFeatureStoreEnabled: "true",
@@ -550,6 +552,9 @@ func TestCleanupClusterResourcesDisablesAlreadyTerminatingConfigMap(t *testing.T
 	g.Expect(cl.Get(context.Background(), client.ObjectKeyFromObject(cm), stored)).To(Succeed())
 	g.Expect(stored.Data[capabilitiesKeyFeatureStoreEnabled]).To(Equal("false"))
 	g.Expect(stored.Data[capabilitiesKeyDataRegistryEnabled]).To(Equal("false"))
+	started, parseErr := time.Parse(time.RFC3339, stored.Annotations[capabilitiesCleanupStartedAnnotation])
+	g.Expect(parseErr).NotTo(HaveOccurred())
+	g.Expect(time.Since(started)).To(BeNumerically("<", time.Minute))
 	g.Expect(stored.Finalizers).To(ConsistOf(
 		CapabilitiesConfigMapFinalizer,
 		feastOperatorCapabilitiesFinalizer,
@@ -573,9 +578,11 @@ func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 	utilruntime.Must(rbacv1.AddToScheme(scheme))
 
 	feast := newTestFeastOperator()
-	// ConfigMap already Terminating for longer than the release timeout,
-	// with the feast operator finalizer stuck on it.
+	// Cleanup was recorded longer ago than the release timeout, and the feast
+	// operator finalizer is still held. The deletionTimestamp is older still;
+	// the timeout is the cleanup-start annotation.
 	stale := metav1.Time{Time: metav1.Now().Add(-2 * feastOperatorReleaseTimeout)}
+	startedAt := stale.UTC().Format(time.RFC3339)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      capabilitiesConfigMapName,
@@ -583,6 +590,9 @@ func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 			Finalizers: []string{
 				CapabilitiesConfigMapFinalizer,
 				feastOperatorCapabilitiesFinalizer,
+			},
+			Annotations: map[string]string{
+				capabilitiesCleanupStartedAnnotation: startedAt,
 			},
 			DeletionTimestamp: &stale,
 		},
@@ -621,7 +631,9 @@ func TestCleanupClusterResourcesTimesOutWaitingForFeastOperator(t *testing.T) {
 		ContainSubstring(capabilitiesConfigMapName),
 		ContainSubstring("test-ns"),
 		ContainSubstring(feastOperatorCapabilitiesFinalizer),
-		ContainSubstring("kubectl patch"),
+		ContainSubstring(startedAt),
+		ContainSubstring("remove only this finalizer"),
+		Not(ContainSubstring("finalizers")),
 	)))
 }
 
